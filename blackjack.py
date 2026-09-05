@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A simple command-line Blackjack game.
+"""A simple command-line Blackjack game with Hot Streak Bonus.
 
 Rules implemented:
 - Single player versus dealer.
@@ -8,9 +8,11 @@ Rules implemented:
 - Dealer hits on 16 or less and on soft 17.
 - Player actions: hit, stand, double down (first two cards only).
 - Aces count as 11 unless that would bust, then as 1.
+- NEW: Hot Streak Bonus - Win 3+ hands in a row for bonus chips!
 """
 
 from __future__ import annotations
+from streak_bonus import StreakBonus
 
 import random
 import sys
@@ -139,8 +141,8 @@ def dealer_play(shoe: Shoe, dealer: list[Card]) -> None:
             break
 
 
-def settle(bet: int, player: list[Card], dealer: list[Card]) -> int:
-    """Return the net chip change for the player."""
+def settle(bet: int, player: list[Card], dealer: list[Card]) -> tuple[int, str]:
+    """Return (net chip change, result string) for streak tracking."""
     player_val = hand_value(player)
     dealer_val = hand_value(dealer)
     player_bj = is_blackjack(player)
@@ -148,31 +150,32 @@ def settle(bet: int, player: list[Card], dealer: list[Card]) -> int:
 
     if player_bj and dealer_bj:
         print("Both have blackjack. Push.")
-        return 0
+        return 0, "push"
     if player_bj:
         winnings = int(bet * 3 / 2)
         print(f"Blackjack! You win {winnings} chips.")
-        return winnings
+        return winnings, "win"
     if dealer_bj:
         print("Dealer has blackjack. You lose.")
-        return -bet
+        return -bet, "loss"
     if player_val > 21:
         print("You busted. You lose.")
-        return -bet
+        return -bet, "bust"
     if dealer_val > 21:
         print("Dealer busted. You win!")
-        return bet
+        return bet, "win"
     if player_val > dealer_val:
         print("You win!")
-        return bet
+        return bet, "win"
     if player_val < dealer_val:
         print("Dealer wins.")
-        return -bet
+        return -bet, "loss"
     print("Push.")
-    return 0
+    return 0, "push"
 
 
-def play_round(shoe: Shoe, chips: int) -> int:
+def play_round(shoe: Shoe, chips: int, streak: StreakBonus) -> int:
+    """Play one round with streak tracking."""
     bet = prompt_bet(chips)
     if bet == 0:
         return chips
@@ -181,10 +184,19 @@ def play_round(shoe: Shoe, chips: int) -> int:
     dealer = [shoe.draw(), shoe.draw()]
 
     show_hands(player, dealer, hide_dealer=True)
+    
+    # Show current streak status
+    if streak.current_streak > 0:
+        print(f"\n  🔥 Hot Streak: {streak.get_streak_display()}")
 
     if is_blackjack(player) or is_blackjack(dealer):
         show_hands(player, dealer, hide_dealer=False)
-        return chips + settle(bet, player, dealer)
+        change, result = settle(bet, player, dealer)
+        bonus = streak.update(result)
+        if bonus > 0:
+            print(f"🎉 STREAK BONUS: +{bonus} chips for {streak.current_streak} wins in a row!")
+            change += bonus
+        return chips + change
 
     while True:
         can_double = len(player) == 2 and chips >= bet * 2
@@ -208,7 +220,15 @@ def play_round(shoe: Shoe, chips: int) -> int:
         dealer_play(shoe, dealer)
 
     show_hands(player, dealer, hide_dealer=False)
-    return chips + settle(bet, player, dealer)
+    change, result = settle(bet, player, dealer)
+    
+    # Update streak and check for bonus
+    bonus = streak.update(result)
+    if bonus > 0:
+        print(f"🎉 STREAK BONUS: +{bonus} chips for {streak.current_streak} wins in a row!")
+        change += bonus
+    
+    return chips + change
 
 
 def main() -> None:
@@ -216,22 +236,40 @@ def main() -> None:
     print("        Welcome to Blackjack!")
     print("=" * 40)
     print("Blackjack pays 3:2. Dealer hits soft 17.")
+    print("✨ NEW: Hot Streak Bonus - Win 3+ hands in a row for bonus chips!")
 
     shoe = Shoe()
     chips = STARTING_CHIPS
+    streak = StreakBonus()  # Initialize streak tracker
 
     try:
         while chips > 0:
-            chips = play_round(shoe, chips)
+            chips = play_round(shoe, chips, streak)
             if chips <= 0:
                 print("\nYou're out of chips. Game over!")
                 break
+            
+            # Show streak stats after each round
+            if streak.current_streak > 0:
+                stats = streak.get_stats()
+                print(f"\n📊 Streak Stats: {streak.get_streak_display()}")
+                print(f"   Longest streak: {stats['longest_streak']}")
+                print(f"   Total bonus chips earned: {stats['total_bonus_chips']}")
+            
             again = input("\nPlay another round? [Y/n]: ").strip().lower()
             if again in ("n", "no", "q", "quit"):
                 break
+        
+        # Show final streak stats
+        stats = streak.get_stats()
+        print(f"\n🏆 Final Stats:")
+        print(f"   Longest winning streak: {stats['longest_streak']}")
+        print(f"   Total bonus chips earned: {stats['total_bonus_chips']}")
         print(f"\nYou leave the table with {chips} chips. Thanks for playing!")
     except (KeyboardInterrupt, EOFError):
+        stats = streak.get_stats()
         print(f"\n\nCashing out with {chips} chips. Bye!")
+        print(f"🏆 Your best streak was {stats['longest_streak']} wins!")
         sys.exit(0)
 
 
